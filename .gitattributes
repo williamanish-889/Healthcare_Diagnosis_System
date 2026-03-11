@@ -1,0 +1,2 @@
+euronhealthcaresystem filter=lfs diff=lfs merge=lfs -text
+euronhealthcaresystem/* filter=lfs diff=lfs merge=lfs -text

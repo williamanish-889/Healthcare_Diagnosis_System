@@ -1,0 +1,71 @@
+name: Deploy Frontend to ECR
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/deploy-frontend.yml"
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: "Backend API URL (ALB DNS). Example: http://euron-alb-XXXXX.ap-south-1.elb.amazonaws.com"
+        required: true
+        type: string
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: euron-frontend
+  ECS_CLUSTER: euron-prod-cluster
+  ECS_SERVICE: euron-frontend-service
+
+jobs:
+  build-and-push:
+    name: Build & Push Frontend Image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Determine API URL
+        id: api-url
+        run: |
+          if [ -n "${{ github.event.inputs.api_url }}" ]; then
+            echo "url=${{ github.event.inputs.api_url }}" >> $GITHUB_OUTPUT
+          else
+            echo "url=${{ secrets.NEXT_PUBLIC_API_URL }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build, tag, and push image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+          API_URL: ${{ steps.api-url.outputs.url }}
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_API_URL=$API_URL \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            ./frontend
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      - name: Force new ECS deployment
+        run: |
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER \
+            --service $ECS_SERVICE \
+            --force-new-deployment \
+            --no-cli-pager
